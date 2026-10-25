@@ -75,8 +75,14 @@ tr.sg>td{background:var(--th)}
 .pp .pg td,.pp .pg th,.pp .mg .pg td,.pp .mg .pg th{padding:4px 4px;font-size:12px}.pp .pg .cl,.pp .mg .pg .cl{font-size:11px;margin-top:1px}.pp .pg td>div{line-height:1.25}
 .pp input.n,.pp .mg .pg input.n{width:60px;padding:4px 5px;font-size:12px}.pp button.b{padding:5px 12px;font-size:12px}
 .lk{background:var(--th);color:var(--ac);border-radius:999px;padding:7px 14px;font-weight:600;font-size:13px;text-decoration:none;border:1px solid var(--ln)}.lk:hover{border-color:var(--ac)}
+#bar{position:sticky;top:0;z-index:6;background:var(--hd);display:flex;align-items:center;gap:8px;padding-right:14px}
+#bar nav{position:static;flex:1;min-width:0;overflow-x:auto}
+#ctl{display:flex;align-items:center;gap:10px;flex:none}
+#sv{color:#fff;opacity:.85;font-size:12.5px;white-space:nowrap;max-width:210px;overflow:hidden;text-overflow:ellipsis}
+#lob{background:rgba(255,255,255,.16);color:#fff;padding:6px 14px;font-size:12.5px}
+@media(max-width:600px){#sv{max-width:76px}#lob .nm{display:none}#bar{padding-right:8px}}
 </style></head><body>
-<header><div class="hw"><span class="lg">🥗</span><div><h1>Healthy Meal Manager</h1><div class="sub">Costing, menu and plans for Weight Loss, Weight Balance and Weight Gain meals</div></div><div style="margin-left:auto;display:flex;gap:12px;align-items:center"><span id="sv" class="sub"></span><button class="b" style="background:rgba(255,255,255,.16)" id="lob" onclick="logout()">Log out</button></div></div></header><nav id="nav"></nav><main id="app"></main>
+<header><div class="hw"><span class="lg">🥗</span><div><h1>Healthy Meal Manager</h1><div class="sub">Costing, menu and plans for Weight Loss, Weight Balance and Weight Gain meals</div></div></div></header><div id="bar"><nav id="nav"></nav><div id="ctl"><span id="sv"></span><button class="b" id="lob" onclick="logout()">Log out</button></div></div><main id="app"></main>
 <script>
 const K='hm-phase1';const DEF=()=>({items:[],recipes:[],pack:[],menu:{},exp:{Delivery:0,Gas:0,Electricity:0,Mobile:0,Ads:0,Cook:0,Helper:0},perDay:50,prices:{},q:{L:[0,0,0],D:[0,0,0]}});let S=DEF();
 function migrate(){if(!S.target)S.target={WL:450,WB:600,WG:750};if(!Array.isArray(S.exp))S.exp=Object.entries(S.exp||{}).map(([name,amt])=>({name,amt}))}migrate();
@@ -221,7 +227,7 @@ async function doLogin(){const r=await api('login',{u:document.getElementById('l
 async function logout(){if(dirty&&ready)await doSave();await api('logout',{});showLogin()}
 async function loadState(){const r=await api('load');if(r.status===401){showLogin();return}if(!r.j.ok){document.getElementById('app').innerHTML='<div class="card"><h2>Cannot load data</h2><p class="mu">The server did not answer. Check the database settings in config.php, then reload.</p></div>';return}
 let first=false;VER=r.j.ver||0;if(r.j.json){try{S=Object.assign(DEF(),JSON.parse(r.j.json))}catch(e){S=DEF()}}else{first=true;try{const l=JSON.parse(localStorage.getItem(K));if(l&&Array.isArray(l.items))S=Object.assign(DEF(),l)}catch(e){}}
-migrate();ready=true;if(ROLE==='admin'&&!TABS.some(t=>t[0]==='users'))TABS.push(['users','Users']);const lb=document.getElementById('lob');if(lb)lb.textContent='Log out ('+WHO+')';render();if(first)queueSave();else showSt('Loaded')}
+migrate();ready=true;if(ROLE==='admin'&&!TABS.some(t=>t[0]==='users'))TABS.push(['users','Users']);const lb=document.getElementById('lob');if(lb)lb.innerHTML='Log out<span class="nm"> ('+esc(WHO)+')</span>';render();if(first)queueSave();else showSt('Loaded')}
 function applyRole(){if(ROLE==='admin')return;document.querySelectorAll('button.x').forEach(b=>{const t=b.textContent.trim();if(t==='\u2715'||t==='Clear'||t.startsWith('Delete'))b.style.display='none'})}
 let USERS=null,umsg='';
 async function loadUsers(){const r=await api('users');USERS=r.j.users||[];render()}
