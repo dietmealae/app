@@ -8,11 +8,12 @@ $post = ($_SERVER['REQUEST_METHOD'] ?? '') === 'POST';
 if ($post && stripos($_SERVER['CONTENT_TYPE'] ?? '', 'application/json') !== 0) out(['ok' => false], 415);
 $body = json_decode(file_get_contents('php://input') ?: '', true);
 $authed = !empty($_SESSION['uid']);
+$isAdmin = $authed && ($_SESSION['role'] ?? '') === 'admin';
 
 try {
     switch ($a) {
         case 'me':
-            out($authed ? ['ok' => true, 'user' => $_SESSION['user']] : ['ok' => false]);
+            out($authed ? ['ok' => true, 'user' => $_SESSION['user'], 'role' => $_SESSION['role'] ?? 'editor'] : ['ok' => false]);
 
         case 'login':
             if (!$post) out(['ok' => false], 405);
@@ -23,15 +24,16 @@ try {
             if ((int)$st->fetchColumn() >= 8) out(['ok' => false, 'error' => 'Too many attempts. Try again in 15 minutes.'], 429);
             $u = trim((string)($body['u'] ?? ''));
             $p = (string)($body['p'] ?? '');
-            $st = $pdo->prepare('SELECT id, username, pass_hash FROM users WHERE username = ?');
+            $st = $pdo->prepare('SELECT id, username, pass_hash, role FROM users WHERE username = ?');
             $st->execute([$u]);
             $r = $st->fetch();
             if ($r && password_verify($p, $r['pass_hash'])) {
                 session_regenerate_id(true);
                 $_SESSION['uid'] = (int)$r['id'];
                 $_SESSION['user'] = $r['username'];
+                $_SESSION['role'] = $r['role'];
                 $pdo->prepare('DELETE FROM login_attempts WHERE ip = ?')->execute([$ip]);
-                out(['ok' => true]);
+                out(['ok' => true, 'role' => $r['role'], 'user' => $r['username']]);
             }
             $pdo->prepare('INSERT INTO login_attempts (ip) VALUES (?)')->execute([$ip]);
             usleep(700000);
@@ -54,12 +56,49 @@ try {
             if (!is_array($d) || !isset($d['items']) || !is_array($d['items'])) out(['ok' => false, 'error' => 'Invalid data'], 400);
             if (strlen($j) > 8000000) out(['ok' => false, 'error' => 'Too large'], 413);
             $pdo = db();
+            if (!$isAdmin) {
+                $old = $pdo->query('SELECT data FROM app_state WHERE id = 1')->fetchColumn();
+                if ($old !== false && lost(json_decode((string)$old, true), $d)) out(['ok' => false, 'error' => 'Your account cannot delete content. The change was not saved.'], 403);
+            }
             $pdo->prepare('INSERT INTO app_state (id, data) VALUES (1, ?) ON DUPLICATE KEY UPDATE data = VALUES(data)')->execute([$j]);
             $recent = (int)$pdo->query('SELECT COUNT(*) FROM state_history WHERE saved_at > (NOW() - INTERVAL 30 MINUTE)')->fetchColumn();
             if ($recent === 0) {
                 $pdo->prepare('INSERT INTO state_history (data) VALUES (?)')->execute([$j]);
                 $pdo->exec('DELETE FROM state_history WHERE id <= (SELECT m FROM (SELECT COALESCE(MAX(id), 0) - 200 AS m FROM state_history) t)');
             }
+            out(['ok' => true]);
+
+        case 'users':
+            if (!$isAdmin) out(['ok' => false], 403);
+            out(['ok' => true, 'users' => db()->query('SELECT id, username, role FROM users ORDER BY id')->fetchAll()]);
+
+        case 'user_add':
+            if (!$isAdmin || !$post) out(['ok' => false], 403);
+            $u = trim((string)($body['u'] ?? ''));
+            $p = (string)($body['p'] ?? '');
+            $role = in_array($body['role'] ?? '', ['admin', 'editor'], true) ? $body['role'] : 'editor';
+            if (!preg_match('/^[A-Za-z0-9_.-]{3,50}$/', $u)) out(['ok' => false, 'error' => 'Username must be 3 to 50 letters, numbers, dot, dash or underscore.'], 400);
+            if (strlen($p) < 10) out(['ok' => false, 'error' => 'Password must be at least 10 characters.'], 400);
+            try {
+                db()->prepare('INSERT INTO users (username, pass_hash, role) VALUES (?, ?, ?)')->execute([$u, password_hash($p, PASSWORD_DEFAULT), $role]);
+            } catch (PDOException $e) {
+                if ($e->getCode() === '23000') out(['ok' => false, 'error' => 'That username already exists.'], 409);
+                throw $e;
+            }
+            out(['ok' => true]);
+
+        case 'user_pass':
+            if (!$isAdmin || !$post) out(['ok' => false], 403);
+            $p = (string)($body['p'] ?? '');
+            if (strlen($p) < 10) out(['ok' => false, 'error' => 'Password must be at least 10 characters.'], 400);
+            db()->prepare('UPDATE users SET pass_hash = ? WHERE id = ?')->execute([password_hash($p, PASSWORD_DEFAULT), (int)($body['id'] ?? 0)]);
+            out(['ok' => true]);
+
+        case 'user_del':
+            if (!$isAdmin || !$post) out(['ok' => false], 403);
+            $id = (int)($body['id'] ?? 0);
+            if ($id === (int)$_SESSION['uid']) out(['ok' => false, 'error' => 'You cannot remove your own account.'], 400);
+            db()->prepare('DELETE FROM users WHERE id = ?')->execute([$id]);
             out(['ok' => true]);
 
         default:

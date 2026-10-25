@@ -67,3 +67,14 @@ function create_tables(PDO $pdo): void {
         INDEX (ip)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4');
 }
+
+// True if $new is missing anything that exists in $old (used to block deleting for non-admin users).
+function lost(mixed $old, mixed $new): bool {
+    if (!is_array($old)) return false;
+    if (!is_array($new)) return true;
+    foreach ($old as $k => $v) {
+        if (!array_key_exists($k, $new)) return true;
+        if (lost($v, $new[$k])) return true;
+    }
+    return false;
+}
