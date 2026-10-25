@@ -1,6 +1,6 @@
 ---
 deployment:
   tasks:
-    - export DEPLOYPATH=$HOME/public_html/app/
+    - export DEPLOYPATH=$HOME/dietmeal.ae/app/
     - /bin/mkdir -p $DEPLOYPATH
     - /bin/cp index.html $DEPLOYPATH
