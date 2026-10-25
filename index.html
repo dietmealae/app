@@ -81,6 +81,10 @@ tr.sg>td{background:var(--th)}
 #sv{color:#fff;opacity:.85;font-size:12.5px;white-space:nowrap;max-width:210px;overflow:hidden;text-overflow:ellipsis}
 #lob{background:rgba(255,255,255,.16);color:#fff;padding:6px 14px;font-size:12.5px}
 @media(max-width:600px){#sv{max-width:76px}#lob .nm{display:none}#bar{padding-right:8px}}
+#sv{font-size:13.5px;max-width:240px}
+.dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:7px;vertical-align:middle;background:#9fb3aa}
+.dot.ok{background:#4ade80}.dot.wk{background:#f2b705;animation:dp 1s ease-in-out infinite}.dot.er{background:#ff7a66}
+@keyframes dp{50%{opacity:.3}}@media(prefers-reduced-motion:reduce){.dot.wk{animation:none}}
 </style></head><body>
 <header><div class="hw"><span class="lg">🥗</span><div><h1>Healthy Meal Manager</h1><div class="sub">Costing, menu and plans for Weight Loss, Weight Balance and Weight Gain meals</div></div></div></header><div id="bar"><nav id="nav"></nav><div id="ctl"><span id="sv"></span><button class="b" id="lob" onclick="logout()">Log out</button></div></div><main id="app"></main>
 <script>
@@ -217,7 +221,7 @@ const _m4=V.menu;V.menu=()=>{let c=0;return _m4().replace(/Add packaging<\/butto
 function render(){document.getElementById('nav').innerHTML=TABS.map(([k,l])=>`<button class="${k===tab?'on':''}" onclick="tab='${k}';render()">${l}</button>`).join('');document.getElementById('app').innerHTML=V[tab]()}
 const API='api.php';let ROLE='',WHO='';
 async function api(a,body){try{const r=await fetch(API+'?a='+a,{method:body?'POST':'GET',headers:{'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined,credentials:'same-origin'});let j={};try{j=await r.json()}catch(e){}return{status:r.status,j}}catch(e){return{status:0,j:{}}}}
-function showSt(t,bad){const e=document.getElementById('sv');if(e){e.textContent=t;e.style.color=bad?'#ffb4a8':''}}
+function showSt(t,bad){const e=document.getElementById('sv');if(!e)return;const c=!t?'':bad?'er':/^Saving/.test(t)?'wk':'ok';e.innerHTML=(c?'<i class="dot '+c+'"></i>':'')+hx(t||'');e.title=t||''}
 let stTimer=null,saving=false,dirty=false,ready=false;
 function queueSave(){if(!ready)return;dirty=true;clearTimeout(stTimer);showSt('Saving\u2026');stTimer=setTimeout(doSave,700)}
 async function doSave(){if(saving){stTimer=setTimeout(doSave,500);return}saving=true;dirty=false;const r=await api('save',{json:JSON.stringify(S),base:VER});saving=false;if(r.status===401){ready=false;showLogin('Your session ended. Please log in again.');return}if(r.status===409){showSt('Someone else changed the data. Latest loaded.',true);alert(r.j.error);await loadState();return}if(r.status===403){showSt(r.j.error||'Not allowed',true);alert(r.j.error||'Not allowed');await loadState();return}if(r.j.ok)VER=r.j.ver;showSt(r.j.ok?'Saved':'Not saved, check your connection',!r.j.ok);if(!r.j.ok)dirty=true;else if(dirty)queueSave()}
