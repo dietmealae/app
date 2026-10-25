@@ -53,6 +53,7 @@ function create_tables(PDO $pdo): void {
     $pdo->exec('CREATE TABLE IF NOT EXISTS app_state (
         id TINYINT PRIMARY KEY,
         data LONGTEXT NOT NULL,
+        ver INT NOT NULL DEFAULT 0,
         updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4');
     $pdo->exec('CREATE TABLE IF NOT EXISTS state_history (
@@ -77,4 +78,10 @@ function lost(mixed $old, mixed $new): bool {
         if (lost($v, $new[$k])) return true;
     }
     return false;
+}
+
+// Adds the version column on servers that were set up before versions existed.
+function ensure_ver(PDO $pdo): void {
+    try { $pdo->query('SELECT ver FROM app_state LIMIT 1'); }
+    catch (PDOException $e) { $pdo->exec('ALTER TABLE app_state ADD COLUMN ver INT NOT NULL DEFAULT 0'); }
 }

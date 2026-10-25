@@ -44,10 +44,16 @@ try {
             session_destroy();
             out(['ok' => true]);
 
+        case 'ver':
+            if (!$authed) out(['ok' => false], 401);
+            $pdo = db(); ensure_ver($pdo);
+            out(['ok' => true, 'ver' => (int)$pdo->query('SELECT COALESCE(MAX(ver), 0) FROM app_state')->fetchColumn()]);
+
         case 'load':
             if (!$authed) out(['ok' => false], 401);
-            $r = db()->query('SELECT data FROM app_state WHERE id = 1')->fetch();
-            out(['ok' => true, 'json' => $r ? $r['data'] : null]);
+            $pdo = db(); ensure_ver($pdo);
+            $r = $pdo->query('SELECT data, ver FROM app_state WHERE id = 1')->fetch();
+            out(['ok' => true, 'json' => $r ? $r['data'] : null, 'ver' => $r ? (int)$r['ver'] : 0]);
 
         case 'save':
             if (!$authed || !$post) out(['ok' => false], $authed ? 405 : 401);
@@ -55,18 +61,32 @@ try {
             $d = json_decode($j, true);
             if (!is_array($d) || !isset($d['items']) || !is_array($d['items'])) out(['ok' => false, 'error' => 'Invalid data'], 400);
             if (strlen($j) > 8000000) out(['ok' => false, 'error' => 'Too large'], 413);
-            $pdo = db();
-            if (!$isAdmin) {
-                $old = $pdo->query('SELECT data FROM app_state WHERE id = 1')->fetchColumn();
-                if ($old !== false && lost(json_decode((string)$old, true), $d)) out(['ok' => false, 'error' => 'Your account cannot delete content. The change was not saved.'], 403);
+            $pdo = db(); ensure_ver($pdo);
+            $base = (int)($body['base'] ?? 0);
+            $pdo->beginTransaction();
+            $row = $pdo->query('SELECT data, ver FROM app_state WHERE id = 1 FOR UPDATE')->fetch();
+            if ($row && (int)$row['ver'] !== $base) {
+                $pdo->rollBack();
+                out(['ok' => false, 'conflict' => true, 'error' => 'Someone else changed the data at the same time. The latest version was loaded. Please repeat your last change.'], 409);
             }
-            $pdo->prepare('INSERT INTO app_state (id, data) VALUES (1, ?) ON DUPLICATE KEY UPDATE data = VALUES(data)')->execute([$j]);
+            if (!$isAdmin && $row && lost(json_decode((string)$row['data'], true), $d)) {
+                $pdo->rollBack();
+                out(['ok' => false, 'error' => 'Your account cannot delete content. The change was not saved.'], 403);
+            }
+            if ($row) {
+                $pdo->prepare('UPDATE app_state SET data = ?, ver = ver + 1 WHERE id = 1')->execute([$j]);
+                $newVer = (int)$row['ver'] + 1;
+            } else {
+                $pdo->prepare('INSERT INTO app_state (id, data, ver) VALUES (1, ?, 1)')->execute([$j]);
+                $newVer = 1;
+            }
+            $pdo->commit();
             $recent = (int)$pdo->query('SELECT COUNT(*) FROM state_history WHERE saved_at > (NOW() - INTERVAL 30 MINUTE)')->fetchColumn();
             if ($recent === 0) {
                 $pdo->prepare('INSERT INTO state_history (data) VALUES (?)')->execute([$j]);
                 $pdo->exec('DELETE FROM state_history WHERE id <= (SELECT m FROM (SELECT COALESCE(MAX(id), 0) - 200 AS m FROM state_history) t)');
             }
-            out(['ok' => true]);
+            out(['ok' => true, 'ver' => $newVer]);
 
         case 'users':
             if (!$isAdmin) out(['ok' => false], 403);
