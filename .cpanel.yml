@@ -3,4 +3,4 @@ deployment:
   tasks:
     - export DEPLOYPATH=$HOME/dietmeal.ae/app/
     - /bin/mkdir -p $DEPLOYPATH
-    - /bin/cp index.html api.php lib.php setup.php config.sample.php $DEPLOYPATH
+    - /bin/cp index.html api.php crm.php lib.php setup.php config.sample.php $DEPLOYPATH
