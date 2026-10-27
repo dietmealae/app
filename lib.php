@@ -85,3 +85,68 @@ function ensure_ver(PDO $pdo): void {
     try { $pdo->query('SELECT ver FROM app_state LIMIT 1'); }
     catch (PDOException $e) { $pdo->exec('ALTER TABLE app_state ADD COLUMN ver INT NOT NULL DEFAULT 0'); }
 }
+
+// Tables for customers, orders, meals, payments (Phase 3). Safe to call on every request.
+function ensure_crm(PDO $pdo): void {
+    $pdo->exec('CREATE TABLE IF NOT EXISTS customers (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        name VARCHAR(120) NOT NULL,
+        phone VARCHAR(40) NOT NULL DEFAULT "",
+        notes TEXT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4');
+    $pdo->exec('CREATE TABLE IF NOT EXISTS addresses (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        customer_id INT NOT NULL,
+        label VARCHAR(60) NOT NULL DEFAULT "",
+        area VARCHAR(80) NOT NULL DEFAULT "",
+        address VARCHAR(255) NOT NULL DEFAULT "",
+        map_url VARCHAR(500) NOT NULL DEFAULT "",
+        notes VARCHAR(255) NOT NULL DEFAULT "",
+        INDEX (customer_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4');
+    $pdo->exec('CREATE TABLE IF NOT EXISTS orders (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        customer_id INT NOT NULL,
+        address_id INT NULL,
+        category CHAR(2) NOT NULL,
+        meal_type CHAR(1) NOT NULL,
+        plan_days SMALLINT NOT NULL,
+        start_date DATE NOT NULL,
+        price DECIMAL(10,2) NOT NULL DEFAULT 0,
+        status VARCHAR(12) NOT NULL DEFAULT "active",
+        notes VARCHAR(500) NULL,
+        created_by VARCHAR(50) NOT NULL DEFAULT "",
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        INDEX (customer_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4');
+    $pdo->exec('CREATE TABLE IF NOT EXISTS order_meals (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        order_id INT NOT NULL,
+        serve_date DATE NOT NULL,
+        meal CHAR(1) NOT NULL,
+        status VARCHAR(12) NOT NULL DEFAULT "scheduled",
+        moved_from DATE NULL,
+        INDEX (order_id),
+        INDEX (serve_date)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4');
+    $pdo->exec('CREATE TABLE IF NOT EXISTS payments (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        order_id INT NOT NULL,
+        paid_on DATE NOT NULL,
+        amount DECIMAL(10,2) NOT NULL,
+        method VARCHAR(20) NOT NULL DEFAULT "cash",
+        note VARCHAR(255) NULL,
+        created_by VARCHAR(50) NOT NULL DEFAULT "",
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        INDEX (order_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4');
+    $pdo->exec('CREATE TABLE IF NOT EXISTS holidays (
+        hdate DATE PRIMARY KEY,
+        note VARCHAR(100) NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4');
+    $pdo->exec('CREATE TABLE IF NOT EXISTS settings (
+        skey VARCHAR(40) PRIMARY KEY,
+        sval VARCHAR(255) NOT NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4');
+}
