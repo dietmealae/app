@@ -42,7 +42,7 @@ try {
                 'ok' => true,
                 'customers' => $pdo->query('SELECT id, name, phone, notes FROM customers ORDER BY id DESC')->fetchAll(),
                 'addresses' => $pdo->query('SELECT id, customer_id, label, area, address, map_url, notes FROM addresses ORDER BY id')->fetchAll(),
-                'orders' => $pdo->query("SELECT o.id, o.customer_id, o.address_id, o.category, o.meal_type, o.plan_days, o.start_date, o.price, o.status, o.notes,
+                'orders' => $pdo->query("SELECT o.id, o.customer_id, o.address_id, o.category, o.meal_type, o.plan_days, o.start_date, o.price, o.status, o.notes, o.driver_id,
                     (SELECT COALESCE(SUM(p.amount), 0) FROM payments p WHERE p.order_id = o.id) AS paid,
                     (SELECT COUNT(*) FROM order_meals m WHERE m.order_id = o.id AND m.status IN ('scheduled','delivered')) AS total_meals,
                     (SELECT COUNT(*) FROM order_meals m WHERE m.order_id = o.id AND m.status = 'delivered') AS done_meals,
@@ -50,6 +50,7 @@ try {
                     FROM orders o ORDER BY o.id DESC")->fetchAll(),
                 'settings' => $pdo->query('SELECT skey, sval FROM settings')->fetchAll(PDO::FETCH_KEY_PAIR),
                 'holidays' => $hol,
+                'drivers' => $pdo->query('SELECT id, name, phone FROM drivers ORDER BY name')->fetchAll(),
             ]);
 
         case 'customer_save':
@@ -121,11 +122,17 @@ try {
                 $st->execute([$aid, $cid]);
                 if ((int)$st->fetchColumn() === 0) out(['ok' => false, 'error' => 'That address belongs to another customer.'], 400);
             }
+            $drv = (int)($b['driver_id'] ?? 0);
+            if ($drv > 0) {
+                $st = $pdo->prepare('SELECT COUNT(*) FROM drivers WHERE id = ?');
+                $st->execute([$drv]);
+                if ((int)$st->fetchColumn() === 0) $drv = 0;
+            }
             $d = new DateTimeImmutable($start);
             if (!is_serving($d, $hol)) $d = next_serving($d, $hol);
             $pdo->beginTransaction();
-            $pdo->prepare('INSERT INTO orders (customer_id, address_id, category, meal_type, plan_days, start_date, price, notes, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
-                ->execute([$cid, $aid > 0 ? $aid : null, $cat, $mt, $days, $d->format('Y-m-d'), $price, txt($b, 'notes', 500), $user]);
+            $pdo->prepare('INSERT INTO orders (customer_id, address_id, category, meal_type, plan_days, start_date, price, notes, created_by, driver_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+                ->execute([$cid, $aid > 0 ? $aid : null, $cat, $mt, $days, $d->format('Y-m-d'), $price, txt($b, 'notes', 500), $user, $drv > 0 ? $drv : null]);
             $oid = (int)$pdo->lastInsertId();
             $ins = $pdo->prepare('INSERT INTO order_meals (order_id, serve_date, meal) VALUES (?, ?, ?)');
             for ($i = 0; $i < $days; $i++) {
@@ -141,7 +148,7 @@ try {
             $st->execute([$id]);
             $o = $st->fetch();
             if (!$o) out(['ok' => false, 'error' => 'Order not found.'], 404);
-            $st = $pdo->prepare('SELECT id, serve_date, meal, status, moved_from FROM order_meals WHERE order_id = ? ORDER BY serve_date, meal');
+            $st = $pdo->prepare('SELECT id, serve_date, meal, status, moved_from, moved_to, address_id, driver_id, route_seq FROM order_meals WHERE order_id = ? ORDER BY serve_date, meal');
             $st->execute([$id]);
             $meals = $st->fetchAll();
             $st = $pdo->prepare('SELECT id, paid_on, amount, method, note, created_by FROM payments WHERE order_id = ? ORDER BY paid_on, id');
@@ -160,7 +167,8 @@ try {
                 $st->execute([$aid, (int)$cid]);
                 if ((int)$st->fetchColumn() === 0) out(['ok' => false, 'error' => 'That address belongs to another customer.'], 400);
             }
-            $pdo->prepare('UPDATE orders SET address_id = ?, notes = ? WHERE id = ?')->execute([$aid > 0 ? $aid : null, txt($b, 'notes', 500), $id]);
+            $drv = (int)($b['driver_id'] ?? 0);
+            $pdo->prepare('UPDATE orders SET address_id = ?, notes = ?, driver_id = ? WHERE id = ?')->execute([$aid > 0 ? $aid : null, txt($b, 'notes', 500), $drv > 0 ? $drv : null, $id]);
             out(['ok' => true]);
 
         case 'order_cancel':
@@ -185,11 +193,16 @@ try {
             $st = $pdo->prepare("SELECT MAX(serve_date) FROM order_meals WHERE order_id = ? AND status IN ('scheduled','delivered')");
             $st->execute([$oid]);
             $new = next_serving(new DateTimeImmutable((string)$st->fetchColumn()), $hol)->format('Y-m-d');
+            $to = txt($b, 'to_date', 10);
+            if ($to !== '') {
+                if (!valid_date($to) || !is_serving(new DateTimeImmutable($to), $hol)) out(['ok' => false, 'error' => 'Choose a serving day (not a Sunday or a holiday).'], 400);
+                $new = $to;
+            }
             $pdo->beginTransaction();
-            $upd = $pdo->prepare("UPDATE order_meals SET status = 'postponed' WHERE id = ?");
+            $upd = $pdo->prepare("UPDATE order_meals SET status = 'postponed', moved_to = ? WHERE id = ?");
             $ins = $pdo->prepare('INSERT INTO order_meals (order_id, serve_date, meal, moved_from) VALUES (?, ?, ?, ?)');
             foreach ($rows as $r) {
-                $upd->execute([(int)$r['id']]);
+                $upd->execute([$new, (int)$r['id']]);
                 $ins->execute([$oid, $new, $r['meal'], $r['serve_date']]);
             }
             $pdo->commit();
@@ -227,14 +240,106 @@ try {
             if (!valid_date($date)) out(['ok' => false, 'error' => 'Invalid date.'], 400);
             $st = $pdo->prepare("SELECT m.id, m.meal, m.status, o.id AS order_id, o.category, o.notes AS order_notes, o.price,
                     (SELECT COALESCE(SUM(p.amount), 0) FROM payments p WHERE p.order_id = o.id) AS paid,
+                    (SELECT COUNT(*) FROM order_meals mm WHERE mm.order_id = o.id AND mm.status IN ('scheduled','delivered')) AS total_meals,
+                    COALESCE(m.driver_id, o.driver_id) AS driver_id, m.route_seq,
                     c.name, c.phone, a.label, a.area, a.address, a.map_url, a.notes AS address_notes
                 FROM order_meals m
                 JOIN orders o ON o.id = m.order_id
                 JOIN customers c ON c.id = o.customer_id
-                LEFT JOIN addresses a ON a.id = o.address_id
+                LEFT JOIN addresses a ON a.id = COALESCE(m.address_id, o.address_id)
                 WHERE m.serve_date = ? AND m.status IN ('scheduled','delivered') AND o.status = 'active'
                 ORDER BY a.area, c.name, m.meal");
             $st->execute([$date]);
+            out(['ok' => true, 'rows' => $st->fetchAll()]);
+
+        case 'meal_address':
+            $oid = (int)($b['order_id'] ?? 0);
+            $aid = (int)($b['address_id'] ?? 0);
+            $st = $pdo->prepare('SELECT customer_id FROM orders WHERE id = ?');
+            $st->execute([$oid]);
+            $cid = $st->fetchColumn();
+            if ($cid === false) out(['ok' => false, 'error' => 'Order not found.'], 404);
+            if ($aid > 0) {
+                $st = $pdo->prepare('SELECT COUNT(*) FROM addresses WHERE id = ? AND customer_id = ?');
+                $st->execute([$aid, (int)$cid]);
+                if ((int)$st->fetchColumn() === 0) out(['ok' => false, 'error' => 'That address belongs to another customer.'], 400);
+            }
+            $ids = array_values(array_unique(array_map('intval', is_array($b['ids'] ?? null) ? $b['ids'] : [])));
+            $val = $aid > 0 ? $aid : null;
+            if ($ids) {
+                $in = implode(',', array_fill(0, count($ids), '?'));
+                $pdo->prepare("UPDATE order_meals SET address_id = ? WHERE order_id = ? AND status = 'scheduled' AND id IN ($in)")->execute([$val, $oid, ...$ids]);
+            } else {
+                $pdo->prepare("UPDATE order_meals SET address_id = ? WHERE order_id = ? AND status = 'scheduled'")->execute([$val, $oid]);
+            }
+            out(['ok' => true]);
+
+        case 'assign':
+            $ids = array_values(array_unique(array_map('intval', is_array($b['ids'] ?? null) ? $b['ids'] : [])));
+            if (!$ids || count($ids) > 300) out(['ok' => false, 'error' => 'Nothing to assign.'], 400);
+            $drv = (int)($b['driver_id'] ?? 0);
+            if ($drv > 0) {
+                $st = $pdo->prepare('SELECT COUNT(*) FROM drivers WHERE id = ?');
+                $st->execute([$drv]);
+                if ((int)$st->fetchColumn() === 0) out(['ok' => false, 'error' => 'Delivery person not found.'], 404);
+            }
+            $in = implode(',', array_fill(0, count($ids), '?'));
+            $st = $pdo->prepare("SELECT id, serve_date, meal FROM order_meals WHERE id IN ($in) AND status IN ('scheduled','delivered') ORDER BY id");
+            $st->execute($ids);
+            $rows = $st->fetchAll();
+            $mx = $pdo->prepare('SELECT COALESCE(MAX(route_seq), 0) FROM order_meals WHERE serve_date = ? AND meal = ? AND driver_id = ?');
+            $upd = $pdo->prepare('UPDATE order_meals SET driver_id = ?, route_seq = ? WHERE id = ?');
+            $pdo->beginTransaction();
+            foreach ($rows as $r) {
+                $seq = null;
+                if ($drv > 0) {
+                    $mx->execute([$r['serve_date'], $r['meal'], $drv]);
+                    $seq = (int)$mx->fetchColumn() + 1;
+                }
+                $upd->execute([$drv, $seq, (int)$r['id']]);
+            }
+            $pdo->commit();
+            out(['ok' => true]);
+
+        case 'route_order':
+            $ids = array_values(array_unique(array_map('intval', is_array($b['ids'] ?? null) ? $b['ids'] : [])));
+            if (!$ids || count($ids) > 300) out(['ok' => false], 400);
+            $upd = $pdo->prepare('UPDATE order_meals SET route_seq = ? WHERE id = ?');
+            $pdo->beginTransaction();
+            foreach ($ids as $i => $id) $upd->execute([$i + 1, $id]);
+            $pdo->commit();
+            out(['ok' => true]);
+
+        case 'driver_save':
+            $id = (int)($b['id'] ?? 0);
+            $name = txt($b, 'name', 80);
+            if ($name === '') out(['ok' => false, 'error' => 'Enter the name.'], 400);
+            $phone = txt($b, 'phone', 40);
+            if ($id > 0) {
+                $pdo->prepare('UPDATE drivers SET name = ?, phone = ? WHERE id = ?')->execute([$name, $phone, $id]);
+            } else {
+                $pdo->prepare('INSERT INTO drivers (name, phone) VALUES (?, ?)')->execute([$name, $phone]);
+                $id = (int)$pdo->lastInsertId();
+            }
+            out(['ok' => true, 'id' => $id]);
+
+        case 'driver_delete':
+            need_admin($isAdmin);
+            $id = (int)($b['id'] ?? 0);
+            $pdo->prepare('UPDATE order_meals SET driver_id = NULL, route_seq = NULL WHERE driver_id = ?')->execute([$id]);
+            $pdo->prepare('UPDATE orders SET driver_id = NULL WHERE driver_id = ?')->execute([$id]);
+            $pdo->prepare('DELETE FROM drivers WHERE id = ?')->execute([$id]);
+            out(['ok' => true]);
+
+        case 'month':
+            $from = txt($b, 'from', 10);
+            $to = txt($b, 'to', 10);
+            if (!valid_date($from) || !valid_date($to)) out(['ok' => false, 'error' => 'Invalid dates.'], 400);
+            $st = $pdo->prepare("SELECT m.serve_date, m.meal, o.category, COUNT(*) AS q
+                FROM order_meals m JOIN orders o ON o.id = m.order_id
+                WHERE o.status = 'active' AND o.start_date BETWEEN ? AND ? AND m.status IN ('scheduled','delivered')
+                GROUP BY m.serve_date, m.meal, o.category");
+            $st->execute([$from, $to]);
             out(['ok' => true, 'rows' => $st->fetchAll()]);
 
         case 'settings_save':

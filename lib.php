@@ -149,4 +149,27 @@ function ensure_crm(PDO $pdo): void {
         skey VARCHAR(40) PRIMARY KEY,
         sval VARCHAR(255) NOT NULL
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4');
+
+    $pdo->exec('CREATE TABLE IF NOT EXISTS drivers (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        name VARCHAR(80) NOT NULL,
+        phone VARCHAR(40) NOT NULL DEFAULT ""
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4');
+    // schema_v2: delivery persons, per-meal address, postponement destination
+    $v = $pdo->query('SELECT sval FROM settings WHERE skey = "schema"')->fetchColumn();
+    if ($v === false || (int)$v < 2) {
+        $cols = [
+            ['order_meals', 'address_id', 'INT NULL'],
+            ['order_meals', 'driver_id', 'INT NULL'],
+            ['order_meals', 'route_seq', 'INT NULL'],
+            ['order_meals', 'moved_to', 'DATE NULL'],
+            ['orders', 'driver_id', 'INT NULL'],
+        ];
+        foreach ($cols as [$t, $c, $def]) {
+            $st = $pdo->prepare('SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?');
+            $st->execute([$t, $c]);
+            if ((int)$st->fetchColumn() === 0) $pdo->exec("ALTER TABLE $t ADD COLUMN $c $def");
+        }
+        $pdo->exec('INSERT INTO settings (skey, sval) VALUES ("schema", "2") ON DUPLICATE KEY UPDATE sval = "2"');
+    }
 }
