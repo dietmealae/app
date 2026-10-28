@@ -242,7 +242,7 @@ try {
                     (SELECT COALESCE(SUM(p.amount), 0) FROM payments p WHERE p.order_id = o.id) AS paid,
                     (SELECT COUNT(*) FROM order_meals mm WHERE mm.order_id = o.id AND mm.status IN ('scheduled','delivered')) AS total_meals,
                     COALESCE(m.driver_id, o.driver_id) AS driver_id, m.route_seq,
-                    c.name, c.phone, a.label, a.area, a.address, a.map_url, a.notes AS address_notes
+                    c.id AS customer_id, c.name, c.phone, a.label, a.area, a.address, a.map_url, a.notes AS address_notes
                 FROM order_meals m
                 JOIN orders o ON o.id = m.order_id
                 JOIN customers c ON c.id = o.customer_id
@@ -329,6 +329,23 @@ try {
             $pdo->prepare('UPDATE order_meals SET driver_id = NULL, route_seq = NULL WHERE driver_id = ?')->execute([$id]);
             $pdo->prepare('UPDATE orders SET driver_id = NULL WHERE driver_id = ?')->execute([$id]);
             $pdo->prepare('DELETE FROM drivers WHERE id = ?')->execute([$id]);
+            out(['ok' => true]);
+
+        case 'grid':
+            $from = txt($b, 'from', 10);
+            $to = txt($b, 'to', 10);
+            if (!valid_date($from) || !valid_date($to)) out(['ok' => false, 'error' => 'Invalid dates.'], 400);
+            $st = $pdo->prepare("SELECT id, order_id, serve_date, meal, status, moved_from, moved_to
+                FROM order_meals
+                WHERE order_id IN (SELECT order_id FROM (SELECT DISTINCT order_id FROM order_meals WHERE serve_date BETWEEN ? AND ?) t)
+                ORDER BY order_id, serve_date, meal");
+            $st->execute([$from, $to]);
+            out(['ok' => true, 'rows' => $st->fetchAll()]);
+
+        case 'reset_testdata':
+            need_admin($isAdmin);
+            if ((string)($b['confirm'] ?? '') !== 'RESET') out(['ok' => false, 'error' => 'Type RESET to confirm.'], 400);
+            foreach (['payments', 'order_meals', 'orders', 'addresses', 'customers'] as $t) $pdo->exec("TRUNCATE TABLE $t");
             out(['ok' => true]);
 
         case 'month':
