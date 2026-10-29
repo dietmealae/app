@@ -199,4 +199,13 @@ function ensure_crm(PDO $pdo): void {
         }
         $pdo->exec('INSERT INTO settings (skey, sval) VALUES ("schema", "3") ON DUPLICATE KEY UPDATE sval = "3"');
     }
+    // schema_v4: remember when a postponed meal changed between lunch and dinner
+    if ($v === false || (int)$v < 4) {
+        foreach ([['order_meals', 'moved_from_meal', 'CHAR(1) NULL'], ['order_meals', 'moved_to_meal', 'CHAR(1) NULL']] as [$t, $c, $def]) {
+            $st = $pdo->prepare('SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?');
+            $st->execute([$t, $c]);
+            if ((int)$st->fetchColumn() === 0) $pdo->exec("ALTER TABLE $t ADD COLUMN $c $def");
+        }
+        $pdo->exec('INSERT INTO settings (skey, sval) VALUES ("schema", "4") ON DUPLICATE KEY UPDATE sval = "4"');
+    }
 }

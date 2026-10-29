@@ -223,7 +223,7 @@ try {
             $st->execute([$id]);
             $o = $st->fetch();
             if (!$o) out(['ok' => false, 'error' => 'Order not found.'], 404);
-            $st = $pdo->prepare('SELECT id, serve_date, meal, status, moved_from, moved_to, address_id, driver_id, route_seq, qty FROM order_meals WHERE order_id = ? ORDER BY serve_date, meal');
+            $st = $pdo->prepare('SELECT id, serve_date, meal, status, moved_from, moved_to, moved_from_meal, moved_to_meal, address_id, driver_id, route_seq, qty FROM order_meals WHERE order_id = ? ORDER BY serve_date, meal');
             $st->execute([$id]);
             $meals = $st->fetchAll();
             $st = $pdo->prepare('SELECT id, serve_date, meal, qty, name, price_each, items FROM order_packs WHERE order_id = ? ORDER BY serve_date, meal, id');
@@ -247,6 +247,67 @@ try {
             }
             $drv = (int)($b['driver_id'] ?? 0);
             $pdo->prepare('UPDATE orders SET address_id = ?, notes = ?, driver_id = ? WHERE id = ?')->execute([$aid > 0 ? $aid : null, txt($b, 'notes', 500), $drv > 0 ? $drv : null, $id]);
+            out(['ok' => true]);
+
+        case 'order_edit':
+            $id = (int)($b['id'] ?? 0);
+            $st = $pdo->prepare('SELECT * FROM orders WHERE id = ?');
+            $st->execute([$id]);
+            $o = $st->fetch();
+            if (!$o) out(['ok' => false, 'error' => 'Order not found.'], 404);
+            $aid = (int)($b['address_id'] ?? 0);
+            if ($aid > 0) {
+                $st = $pdo->prepare('SELECT COUNT(*) FROM addresses WHERE id = ? AND customer_id = ?');
+                $st->execute([$aid, (int)$o['customer_id']]);
+                if ((int)$st->fetchColumn() === 0) out(['ok' => false, 'error' => 'That address belongs to another customer.'], 400);
+            }
+            $drv = (int)($b['driver_id'] ?? 0);
+            if ($drv > 0) {
+                $st = $pdo->prepare('SELECT COUNT(*) FROM drivers WHERE id = ?');
+                $st->execute([$drv]);
+                if ((int)$st->fetchColumn() === 0) $drv = 0;
+            }
+            $price = round((float)($b['price'] ?? $o['price']), 2);
+            if ($price < 0 || $price > 10000000) out(['ok' => false, 'error' => 'Invalid price.'], 400);
+            $cat = $o['category'];
+            $extrasJson = $o['extras'];
+            $add = 0;
+            if ($o['kind'] === 'plan') {
+                $c2 = txt($b, 'category', 2);
+                if (in_array($c2, ['WL', 'WB', 'WG'], true)) $cat = $c2;
+                $extras = [];
+                if (is_array($b['extras'] ?? null)) {
+                    foreach ($b['extras'] as $e) {
+                        $et = (string)($e['type'] ?? '');
+                        $eg = (float)($e['grams'] ?? 0);
+                        $ep = (float)($e['ppt'] ?? 0);
+                        if (in_array($et, ['protein', 'carb', 'veg'], true) && $eg > 0 && $eg <= 1000 && $ep >= 0 && $ep <= 1000) $extras[] = ['type' => $et, 'grams' => round($eg, 1), 'ppt' => round($ep, 2)];
+                    }
+                }
+                $extrasJson = $extras ? json_encode($extras) : null;
+                $add = (int)($b['add_days'] ?? 0);
+                if ($add < 0 || $add > 60 || $o['status'] !== 'active') $add = 0;
+            }
+            $pdo->beginTransaction();
+            $pdo->prepare('UPDATE orders SET category = ?, price = ?, notes = ?, address_id = ?, driver_id = ?, extras = ?, plan_days = plan_days + ? WHERE id = ?')
+                ->execute([$cat, $price, txt($b, 'notes', 500), $aid > 0 ? $aid : null, $drv > 0 ? $drv : null, $extrasJson, $add, $id]);
+            if ($add > 0) {
+                $st = $pdo->prepare("SELECT MAX(serve_date) FROM order_meals WHERE order_id = ? AND status IN ('scheduled','delivered')");
+                $st->execute([$id]);
+                $max = $st->fetchColumn();
+                $d = next_serving(new DateTimeImmutable($max ? (string)$max : (string)$o['start_date']), $hol);
+                $ins = $pdo->prepare('INSERT INTO order_meals (order_id, serve_date, meal) VALUES (?, ?, ?)');
+                for ($i = 0; $i < $add; $i++) {
+                    foreach (($o['meal_type'] === 'B' ? ['L', 'D'] : [$o['meal_type']]) as $m) $ins->execute([$id, $d->format('Y-m-d'), $m]);
+                    $d = next_serving($d, $hol);
+                }
+            }
+            $pdo->commit();
+            out(['ok' => true]);
+
+        case 'meal_cancel':
+            need_admin($isAdmin);
+            $pdo->prepare("UPDATE order_meals SET status = 'cancelled' WHERE id = ? AND status = 'scheduled'")->execute([(int)($b['meal_id'] ?? 0)]);
             out(['ok' => true]);
 
         case 'order_cancel':
@@ -276,12 +337,15 @@ try {
                 if (!valid_date($to) || !is_serving(new DateTimeImmutable($to), $hol)) out(['ok' => false, 'error' => 'Choose a serving day (not a Sunday or a holiday).'], 400);
                 $new = $to;
             }
+            $toMeal = txt($b, 'to_meal', 1);
+            if (!in_array($toMeal, ['L', 'D'], true) || count($rows) !== 1) $toMeal = '';
             $pdo->beginTransaction();
-            $upd = $pdo->prepare("UPDATE order_meals SET status = 'postponed', moved_to = ? WHERE id = ?");
-            $ins = $pdo->prepare('INSERT INTO order_meals (order_id, serve_date, meal, moved_from) VALUES (?, ?, ?, ?)');
+            $upd = $pdo->prepare("UPDATE order_meals SET status = 'postponed', moved_to = ?, moved_to_meal = ? WHERE id = ?");
+            $ins = $pdo->prepare('INSERT INTO order_meals (order_id, serve_date, meal, moved_from, moved_from_meal) VALUES (?, ?, ?, ?, ?)');
             foreach ($rows as $r) {
-                $upd->execute([$new, (int)$r['id']]);
-                $ins->execute([$oid, $new, $r['meal'], $r['serve_date']]);
+                $mm = $toMeal !== '' ? $toMeal : $r['meal'];
+                $upd->execute([$new, $mm, (int)$r['id']]);
+                $ins->execute([$oid, $new, $mm, $r['serve_date'], $r['meal']]);
             }
             $pdo->commit();
             out(['ok' => true, 'new_date' => $new]);
