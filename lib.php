@@ -155,6 +155,18 @@ function ensure_crm(PDO $pdo): void {
         name VARCHAR(80) NOT NULL,
         phone VARCHAR(40) NOT NULL DEFAULT ""
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4');
+    $pdo->exec('CREATE TABLE IF NOT EXISTS order_packs (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        order_id INT NOT NULL,
+        serve_date DATE NOT NULL,
+        meal CHAR(1) NOT NULL,
+        qty INT NOT NULL,
+        name VARCHAR(80) NOT NULL DEFAULT "",
+        price_each DECIMAL(10,2) NOT NULL DEFAULT 0,
+        items TEXT NOT NULL,
+        INDEX (order_id),
+        INDEX (serve_date)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4');
     // schema_v2: delivery persons, per-meal address, postponement destination
     $v = $pdo->query('SELECT sval FROM settings WHERE skey = "schema"')->fetchColumn();
     if ($v === false || (int)$v < 2) {
@@ -171,5 +183,20 @@ function ensure_crm(PDO $pdo): void {
             if ((int)$st->fetchColumn() === 0) $pdo->exec("ALTER TABLE $t ADD COLUMN $c $def");
         }
         $pdo->exec('INSERT INTO settings (skey, sval) VALUES ("schema", "2") ON DUPLICATE KEY UPDATE sval = "2"');
+    }
+    // schema_v3: extras on plans, event (bulk) orders, portions per delivery
+    if ($v === false || (int)$v < 3) {
+        $cols = [
+            ['orders', 'kind', 'VARCHAR(8) NOT NULL DEFAULT "plan"'],
+            ['orders', 'extras', 'TEXT NULL'],
+            ['orders', 'title', 'VARCHAR(120) NULL'],
+            ['order_meals', 'qty', 'INT NOT NULL DEFAULT 1'],
+        ];
+        foreach ($cols as [$t, $c, $def]) {
+            $st = $pdo->prepare('SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?');
+            $st->execute([$t, $c]);
+            if ((int)$st->fetchColumn() === 0) $pdo->exec("ALTER TABLE $t ADD COLUMN $c $def");
+        }
+        $pdo->exec('INSERT INTO settings (skey, sval) VALUES ("schema", "3") ON DUPLICATE KEY UPDATE sval = "3"');
     }
 }
