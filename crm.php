@@ -134,7 +134,7 @@ try {
                     $et = (string)($e['type'] ?? '');
                     $eg = (float)($e['grams'] ?? 0);
                     $ep = (float)($e['ppt'] ?? 0);
-                    if (in_array($et, ['protein', 'carb', 'veg'], true) && $eg > 0 && $eg <= 1000 && $ep >= 0 && $ep <= 1000) $extras[] = ['type' => $et, 'grams' => round($eg, 1), 'ppt' => round($ep, 2)];
+                    if (in_array($et, ['protein', 'carb', 'veg', 'salad', 'gravy', 'curry'], true) && $eg > 0 && $eg <= 1000 && $ep >= 0 && $ep <= 1000) $extras[] = ['type' => $et, 'grams' => round($eg, 1), 'ppt' => round($ep, 2)];
                 }
             }
             $extrasJson = $extras ? json_encode($extras) : null;
@@ -281,7 +281,7 @@ try {
                         $et = (string)($e['type'] ?? '');
                         $eg = (float)($e['grams'] ?? 0);
                         $ep = (float)($e['ppt'] ?? 0);
-                        if (in_array($et, ['protein', 'carb', 'veg'], true) && $eg > 0 && $eg <= 1000 && $ep >= 0 && $ep <= 1000) $extras[] = ['type' => $et, 'grams' => round($eg, 1), 'ppt' => round($ep, 2)];
+                        if (in_array($et, ['protein', 'carb', 'veg', 'salad', 'gravy', 'curry'], true) && $eg > 0 && $eg <= 1000 && $ep >= 0 && $ep <= 1000) $extras[] = ['type' => $et, 'grams' => round($eg, 1), 'ppt' => round($ep, 2)];
                     }
                 }
                 $extrasJson = $extras ? json_encode($extras) : null;
