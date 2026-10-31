@@ -339,6 +339,14 @@ try {
             }
             $toMeal = txt($b, 'to_meal', 1);
             if (!in_array($toMeal, ['L', 'D'], true) || count($rows) !== 1) $toMeal = '';
+            $chk = $pdo->prepare("SELECT COUNT(*) FROM order_meals WHERE order_id = ? AND serve_date = ? AND meal = ? AND status IN ('scheduled','delivered')");
+            foreach ($rows as $r) {
+                $mm = $toMeal !== '' ? $toMeal : $r['meal'];
+                $chk->execute([$oid, $new, $mm]);
+                if ((int)$chk->fetchColumn() > 0) {
+                    out(['ok' => false, 'error' => 'This order already has a ' . ($mm === 'L' ? 'lunch' : 'dinner') . ' on that day. Choose another day.'], 409);
+                }
+            }
             $pdo->beginTransaction();
             $upd = $pdo->prepare("UPDATE order_meals SET status = 'postponed', moved_to = ?, moved_to_meal = ? WHERE id = ?");
             $ins = $pdo->prepare('INSERT INTO order_meals (order_id, serve_date, meal, moved_from, moved_from_meal) VALUES (?, ?, ?, ?, ?)');
