@@ -208,4 +208,11 @@ function ensure_crm(PDO $pdo): void {
         }
         $pdo->exec('INSERT INTO settings (skey, sval) VALUES ("schema", "4") ON DUPLICATE KEY UPDATE sval = "4"');
     }
+    // schema_v5: delivery charge on orders
+    if ($v === false || (int)$v < 5) {
+        $st = $pdo->prepare('SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = "orders" AND COLUMN_NAME = "delivery_charge"');
+        $st->execute();
+        if ((int)$st->fetchColumn() === 0) $pdo->exec('ALTER TABLE orders ADD COLUMN delivery_charge DECIMAL(10,2) NOT NULL DEFAULT 0');
+        $pdo->exec('INSERT INTO settings (skey, sval) VALUES ("schema", "5") ON DUPLICATE KEY UPDATE sval = "5"');
+    }
 }

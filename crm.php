@@ -42,7 +42,7 @@ try {
                 'ok' => true,
                 'customers' => $pdo->query('SELECT id, name, phone, notes FROM customers ORDER BY id DESC')->fetchAll(),
                 'addresses' => $pdo->query('SELECT id, customer_id, label, area, address, map_url, notes FROM addresses ORDER BY id')->fetchAll(),
-                'orders' => $pdo->query("SELECT o.id, o.customer_id, o.address_id, o.category, o.meal_type, o.plan_days, o.start_date, o.price, o.status, o.notes, o.driver_id, o.kind, o.extras, o.title,
+                'orders' => $pdo->query("SELECT o.id, o.customer_id, o.address_id, o.category, o.meal_type, o.plan_days, o.start_date, o.price, o.status, o.notes, o.driver_id, o.kind, o.extras, o.title, o.delivery_charge,
                     (SELECT COALESCE(SUM(p.amount), 0) FROM payments p WHERE p.order_id = o.id) AS paid,
                     (SELECT COALESCE(SUM(m.qty), 0) FROM order_meals m WHERE m.order_id = o.id AND m.status IN ('scheduled','delivered')) AS total_meals,
                     (SELECT COALESCE(SUM(m.qty), 0) FROM order_meals m WHERE m.order_id = o.id AND m.status = 'delivered') AS done_meals,
@@ -138,11 +138,13 @@ try {
                 }
             }
             $extrasJson = $extras ? json_encode($extras) : null;
+            $dc = round((float)($b['delivery_charge'] ?? 0), 2);
+            if ($dc < 0 || $dc > 100000) $dc = 0;
             $d = new DateTimeImmutable($start);
             if (!is_serving($d, $hol)) $d = next_serving($d, $hol);
             $pdo->beginTransaction();
-            $pdo->prepare('INSERT INTO orders (customer_id, address_id, category, meal_type, plan_days, start_date, price, notes, created_by, driver_id, extras) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-                ->execute([$cid, $aid > 0 ? $aid : null, $cat, $mt, $days, $d->format('Y-m-d'), $price, txt($b, 'notes', 500), $user, $drv > 0 ? $drv : null, $extrasJson]);
+            $pdo->prepare('INSERT INTO orders (customer_id, address_id, category, meal_type, plan_days, start_date, price, notes, created_by, driver_id, extras, delivery_charge) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+                ->execute([$cid, $aid > 0 ? $aid : null, $cat, $mt, $days, $d->format('Y-m-d'), $price, txt($b, 'notes', 500), $user, $drv > 0 ? $drv : null, $extrasJson, $dc]);
             $oid = (int)$pdo->lastInsertId();
             $ins = $pdo->prepare('INSERT INTO order_meals (order_id, serve_date, meal) VALUES (?, ?, ?)');
             for ($i = 0; $i < $days; $i++) {
@@ -198,9 +200,11 @@ try {
             }
             $price = isset($b['price']) && is_numeric($b['price']) ? round((float)$b['price'], 2) : round($total, 2);
             if ($price < 0 || $price > 10000000) out(['ok' => false, 'error' => 'Invalid price.'], 400);
+            $dcb = round((float)($b['delivery_charge'] ?? 0), 2);
+            if ($dcb < 0 || $dcb > 100000) $dcb = 0;
             $pdo->beginTransaction();
-            $pdo->prepare("INSERT INTO orders (customer_id, address_id, category, meal_type, plan_days, start_date, price, notes, created_by, driver_id, kind, title) VALUES (?, ?, 'EV', 'E', 0, ?, ?, ?, ?, ?, 'bulk', ?)")
-                ->execute([$cid, $aid > 0 ? $aid : null, $min, $price, txt($b, 'notes', 500), $user, $drv > 0 ? $drv : null, $title]);
+            $pdo->prepare("INSERT INTO orders (customer_id, address_id, category, meal_type, plan_days, start_date, price, notes, created_by, driver_id, kind, title, delivery_charge) VALUES (?, ?, 'EV', 'E', 0, ?, ?, ?, ?, ?, 'bulk', ?, ?)")
+                ->execute([$cid, $aid > 0 ? $aid : null, $min, $price, txt($b, 'notes', 500), $user, $drv > 0 ? $drv : null, $title, $dcb]);
             $oid = (int)$pdo->lastInsertId();
             $insP = $pdo->prepare('INSERT INTO order_packs (order_id, serve_date, meal, qty, name, price_each, items) VALUES (?, ?, ?, ?, ?, ?, ?)');
             $by = [];
@@ -269,6 +273,8 @@ try {
             }
             $price = round((float)($b['price'] ?? $o['price']), 2);
             if ($price < 0 || $price > 10000000) out(['ok' => false, 'error' => 'Invalid price.'], 400);
+            $dc2 = array_key_exists('delivery_charge', $b) ? round((float)$b['delivery_charge'], 2) : (float)$o['delivery_charge'];
+            if ($dc2 < 0 || $dc2 > 100000) $dc2 = 0;
             $cat = $o['category'];
             $extrasJson = $o['extras'];
             $add = 0;
@@ -289,8 +295,8 @@ try {
                 if ($add < 0 || $add > 60 || $o['status'] !== 'active') $add = 0;
             }
             $pdo->beginTransaction();
-            $pdo->prepare('UPDATE orders SET category = ?, price = ?, notes = ?, address_id = ?, driver_id = ?, extras = ?, plan_days = plan_days + ? WHERE id = ?')
-                ->execute([$cat, $price, txt($b, 'notes', 500), $aid > 0 ? $aid : null, $drv > 0 ? $drv : null, $extrasJson, $add, $id]);
+            $pdo->prepare('UPDATE orders SET category = ?, price = ?, notes = ?, address_id = ?, driver_id = ?, extras = ?, delivery_charge = ?, plan_days = plan_days + ? WHERE id = ?')
+                ->execute([$cat, $price, txt($b, 'notes', 500), $aid > 0 ? $aid : null, $drv > 0 ? $drv : null, $extrasJson, $dc2, $add, $id]);
             if ($add > 0) {
                 $st = $pdo->prepare("SELECT MAX(serve_date) FROM order_meals WHERE order_id = ? AND status IN ('scheduled','delivered')");
                 $st->execute([$id]);
