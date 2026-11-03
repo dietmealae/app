@@ -509,6 +509,22 @@ try {
             foreach (['payments', 'order_meals', 'orders', 'addresses', 'customers'] as $t) $pdo->exec("TRUNCATE TABLE $t");
             out(['ok' => true]);
 
+        case 'forecast':
+            $from = txt($b, 'from', 10);
+            if (!valid_date($from)) out(['ok' => false, 'error' => 'Invalid date.'], 400);
+            $st = $pdo->prepare("SELECT m.serve_date, m.meal, o.category, o.extras, SUM(m.qty) AS q
+                FROM order_meals m JOIN orders o ON o.id = m.order_id
+                WHERE o.status = 'active' AND o.kind = 'plan' AND m.status = 'scheduled' AND m.serve_date >= ?
+                GROUP BY m.serve_date, m.meal, o.category, o.extras ORDER BY m.serve_date");
+            $st->execute([$from]);
+            $rows = $st->fetchAll();
+            $st = $pdo->prepare("SELECT p.serve_date, p.meal, p.qty, p.items
+                FROM order_packs p JOIN orders o ON o.id = p.order_id
+                JOIN order_meals m ON m.order_id = p.order_id AND m.serve_date = p.serve_date AND m.meal = p.meal
+                WHERE o.status = 'active' AND m.status = 'scheduled' AND p.serve_date >= ?");
+            $st->execute([$from]);
+            out(['ok' => true, 'rows' => $rows, 'packs' => $st->fetchAll()]);
+
         case 'month':
             $from = txt($b, 'from', 10);
             $to = txt($b, 'to', 10);
